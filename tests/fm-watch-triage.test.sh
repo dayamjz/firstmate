@@ -806,6 +806,73 @@ test_paused_authoritative_working_preserves_wedge_timer() {
   pass "a paused status overridden by authoritative working preserves its wedge timer and escalates"
 }
 
+# --- paused-vs-done gap: a declared pause superseded by a done-class run-step ---
+# The live 2026-07-14 wake storm (task ingest-attachments-e5r2, backlog item
+# fm-paused-vs-done-gap): a crew idle at a merge gate had `paused:` as its last
+# status line while its authoritative no-mistakes run-step read done/checks-passed
+# (crew_absorb_class -> none). On an ALREADY-classified unchanged pane hash the
+# paused branch's fall-through arm re-surfaced (surface_nonterminal_stale, which
+# wakes and exits) on EVERY poll - an unbounded stale wake storm on a healthy,
+# legitimately idle pane. The invariant this asserts: one unchanged pane hash
+# surfaces at most once plus the bounded wedge cadence, never once per poll. A
+# superseding done-class run-step must route the already-classified hash to the
+# SAME bounded wedge timer the non-paused sibling uses, not re-surface it.
+test_paused_superseded_by_done_run_step_bounded_not_stormed() {
+  local dir state fakebin out drain_out capture_file window key pane_hash sig pid
+  dir=$(make_case paused-superseded-by-done); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  window="test:fm-merge-gate"
+  printf 'idle at the merge gate' > "$capture_file"
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/merge-gate.meta"
+  # Last status line is a declared pause, but the crew is really idle at a merge
+  # gate; .seen-* primed so the signal scan does not pre-empt the stale path.
+  printf 'paused: awaiting the squash merge to land\n' > "$state/merge-gate.status"
+  sig=$(seen_sig "$state/merge-gate.status"); printf '%s' "$sig" > "$state/.seen-merge-gate_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  pane_hash=$(hash_text "idle at the merge gate")
+  printf '%s' "$pane_hash" > "$state/.hash-$key"
+  printf '2\n' > "$state/.count-$key"
+  # Already classified once: .stale-$key holds this exact hash (sf==h), so the
+  # watcher takes the already-classified paused branch. No .paused-$key and no
+  # .stale-since-$key, exactly as a prior surface leaves it - the storm's inputs.
+  printf '%s' "$pane_hash" > "$state/.stale-$key"
+  # The authoritative run-step supersedes the paused log line to a done class.
+  export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green, waiting on merge'
+
+  # Phase A: across several polls under a high wedge threshold the watcher must
+  # ABSORB - never surface once per poll. It stays alive, prints and enqueues
+  # nothing, and starts the bounded wedge timer instead of re-surfacing.
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "watcher surfaced a paused pane superseded by a done run-step (wake storm, should absorb): $(cat "$out")"
+  fi
+  [ ! -s "$out" ] || { reap "$pid"; fail "superseded-pause absorb printed a wake reason: $(cat "$out")"; }
+  [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "superseded-pause absorb enqueued a wake: $(cat "$state/.wake-queue")"; }
+  [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$pane_hash" ] || { reap "$pid"; fail "stale suppressor was not held on the unchanged hash"; }
+  [ -s "$state/.stale-since-$key" ] || { reap "$pid"; fail "superseded pause did not start the bounded wedge timer (still re-surfacing per poll)"; }
+  reap "$pid"
+
+  # Phase B: past the threshold the bounded wedge cadence still surfaces it once,
+  # so a crew genuinely stuck idle behind a stale paused line is not lost forever.
+  echo $(( $(date +%s) - 500 )) > "$state/.stale-since-$key"
+  : > "$out"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "superseded pause did not wedge-escalate past the threshold"
+  grep -F "stale: $window" "$out" >/dev/null || fail "wedge escalation did not print a stale wake"
+  grep -F "possible wedge" "$out" >/dev/null || fail "wedge escalation did not flag a possible wedge"
+  [ ! -e "$state/.stale-since-$key" ] || fail "wedge timer remained after the escalation"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the wedge escalation failed"
+  grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "wedge escalation was not queued"
+  unset FM_FAKE_CREW_STATE
+  pass "a declared pause superseded by a done-class run-step is bounded on the wedge cadence, never a per-poll storm"
+}
+
 # --- consecutive wedge escalations on the same pane demand deep inspection ----
 # Root cause of the PR #252 incident's ~20 minutes of unnoticed green: each
 # wedge escalation fires, gets classified as "still validating" one poll later
@@ -1144,6 +1211,7 @@ test_secondmate_unpause_clears_pause_tracking
 test_nonterminal_stale_pause_transitions_reclassify_unchanged_hash
 test_nonterminal_paused_rechecks_authoritative_state
 test_paused_authoritative_working_preserves_wedge_timer
+test_paused_superseded_by_done_run_step_bounded_not_stormed
 test_nonterminal_stale_repairs_missing_or_corrupt_timer
 test_triage_log_size_cap_accepts_spaced_wc_counts
 test_heartbeat_no_change_absorbed
