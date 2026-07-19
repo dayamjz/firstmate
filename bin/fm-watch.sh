@@ -957,7 +957,17 @@ EOF
                          printf '%s' "$h" > "$sf"
                          wedge_timer_check "$w" "$ssf" "non-terminal stale (provably working after a declared pause)" "$ewf"
                          triage_log "absorbed non-terminal stale (provably working): $w" ;;
-                *)       surface_nonterminal_stale "$w" "$h" ;;
+                # A declared pause whose authoritative run-step has SUPERSEDED it to
+                # a done/stopped class (crew_absorb_class returns none - e.g. a crew
+                # idle at a merge gate with run-step done/checks-passed) must not
+                # re-surface every poll: this hash was already surfaced/classified
+                # once (that is why sf==h here). Route it to the SAME bounded wedge
+                # cadence the non-paused sibling `else` uses, so one unchanged pane
+                # hash surfaces at most once plus the wedge cadence, never once per
+                # poll. Surfacing (surface_nonterminal_stale, which also wakes+exits)
+                # on this already-classified hash is exactly the paused-vs-done wake
+                # storm this branch guards against.
+                *)       wedge_timer_check "$w" "$ssf" "non-terminal stale (declared pause superseded by a done/stopped run-step)" "$ewf" ;;
               esac
             else
               wedge_timer_check "$w" "$ssf" "non-terminal stale" "$ewf"
