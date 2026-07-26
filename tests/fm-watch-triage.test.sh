@@ -21,6 +21,8 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
 # shellcheck source=bin/fm-classify-lib.sh
 . "$ROOT/bin/fm-classify-lib.sh"
+# shellcheck source=bin/fm-pr-lib.sh
+. "$ROOT/bin/fm-pr-lib.sh"
 
 WATCH="$ROOT/bin/fm-watch.sh"
 DRAIN="$ROOT/bin/fm-wake-drain.sh"
@@ -873,6 +875,163 @@ test_paused_superseded_by_done_run_step_bounded_not_stormed() {
   pass "a declared pause superseded by a done-class run-step is bounded on the wedge cadence, never a per-poll storm"
 }
 
+# --- expected terminal-ish waits: surface once per wait, then bounded ---------
+# The 2026-07-25/26 stale wake storms (tasks staging-community-w7p and
+# serpapi-impl-n3f): a crew legitimately idle in a terminal-ish waiting state -
+# done with fm-pr-check.sh's merge poll armed, or blocked after its
+# stop-and-wait contract - was re-surfaced as a possible wedge on effectively
+# every poll cycle. The hash-scoped .stale-* suppressor cannot bound this: any
+# idle-screen redraw (or a steer's reply) churns the pane hash, and every new
+# hash re-runs first-sight classification, which surfaces because the crew is
+# (correctly) not provably working. The invariant these two tests assert: such
+# a wait surfaces ONCE, further redraw churn on the unchanged wait is absorbed,
+# a bounded long-cadence recheck still fires so the wait cannot rot invisibly,
+# and fresh status activity re-surfaces once again.
+
+# Drive one watcher poll cycle expecting ABSORB: the watcher must stay alive,
+# print nothing, and enqueue nothing. Reaps the watcher before returning.
+expect_absorbed_cycle() {  # <state> <fakebin> <window> <capture> <out> <label> [env...]
+  local state=$1 fakebin=$2 window=$3 capture=$4 out=$5 label=$6 pid
+  shift 6
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 env "$@" "$WATCH" > "$out" &
+  pid=$!
+  if ! wait_live "$pid" 30; then
+    reap "$pid"; fail "$label: watcher surfaced (should absorb): $(cat "$out")"
+  fi
+  reap "$pid"
+  [ ! -s "$out" ] || fail "$label: absorb printed a wake reason: $(cat "$out")"
+  [ ! -s "$state/.wake-queue" ] || fail "$label: absorb enqueued a wake: $(cat "$state/.wake-queue")"
+}
+
+# Drive one watcher cycle expecting a SURFACE whose printed reason matches
+# <grep-pattern> (fixed string), and drain the queued stale record.
+expect_surfaced_cycle() {  # <state> <fakebin> <window> <capture> <out> <label> <pattern> [env...]
+  local state=$1 fakebin=$2 window=$3 capture=$4 out=$5 label=$6 pattern=$7 pid
+  shift 7
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 env "$@" "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "$label: watcher did not surface"
+  grep -F "$pattern" "$out" >/dev/null || fail "$label: wake reason did not match '$pattern': $(cat "$out")"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out.drain" 2>/dev/null || fail "$label: drain failed"
+  grep "$(printf '\tstale\t')" "$out.drain" | grep -F "$window" >/dev/null || fail "$label: stale wake was not queued"
+}
+
+# Re-prime a pane as stably stale on <text> and mark the status file seen, so
+# the next cycle exercises exactly the stale path.
+prime_stale_pane() {  # <state> <capture> <key> <task> <text>
+  local state=$1 capture=$2 key=$3 task=$4 text=$5 sig
+  printf '%s' "$text" > "$capture"
+  hash_text "$text" | tr -d '\n' > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  sig=$(seen_sig "$state/$task.status"); printf '%s' "$sig" > "$state/.seen-${task}_status"
+  touch "$state/.last-check"
+}
+
+test_done_awaiting_merge_pr_poll_stale_bounded_not_stormed() {
+  local dir state fakebin out capture_file window key
+  dir=$(make_case done-merge-wait); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-merge-wait"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\npr=https://github.com/o/r/pull/7\n' "$window" > "$state/merge-wait.meta"
+  printf 'done: PR https://github.com/o/r/pull/7 checks green\n' > "$state/merge-wait.status"
+  # Arm a GENUINE merge poll exactly as fm-pr-check.sh publishes it, so the
+  # watcher-startup migration validates and preserves the artifacts.
+  fm_pr_poll_prepare "$state" merge-wait https://github.com/o/r/pull/7 o r 7 "$ROOT/bin/fm-pr-poll.sh" \
+    || fail "could not prepare the armed merge poll"
+  fm_pr_poll_publish_prepared || fail "could not publish the armed merge poll"
+  export FM_FAKE_CREW_STATE='state: done · source: run-step · checks green, waiting on merge'
+
+  # Phase A: the wait's first stale surfaces once, as a plain stale wake.
+  prime_stale_pane "$state" "$capture_file" "$key" merge-wait 'idle at the merge gate, frame A'
+  expect_surfaced_cycle "$state" "$fakebin" "$window" "$capture_file" "$out" \
+    "done-merge-wait first sight" "stale: $window"
+  [ -s "$state/.stale-expected-$key" ] || fail "first surface did not record the expected-wait marker"
+
+  # Phase B: the idle screen redraws (hash churn) while the wait is unchanged -
+  # the live storm's per-cycle re-surface input. Must absorb, not surface.
+  : > "$out"
+  prime_stale_pane "$state" "$capture_file" "$key" merge-wait 'idle at the merge gate, frame B'
+  expect_absorbed_cycle "$state" "$fakebin" "$window" "$capture_file" "$out" "done-merge-wait churn"
+  [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$(hash_text 'idle at the merge gate, frame B')" ] \
+    || fail "churn absorb did not advance the stale suppressor"
+  grep -F "expected idle" "$state/.watch-triage.log" >/dev/null \
+    || fail "churn absorb was not triage-logged as an expected idle"
+
+  # Phase C: the bounded recheck still fires once past the cadence, so a
+  # forgotten merge wait cannot rot invisibly.
+  : > "$out"
+  sleep 1.1
+  prime_stale_pane "$state" "$capture_file" "$key" merge-wait 'idle at the merge gate, frame B'
+  expect_surfaced_cycle "$state" "$fakebin" "$window" "$capture_file" "$out" \
+    "done-merge-wait cadence recheck" "confirm the wait still holds" FM_PAUSE_RESURFACE_SECS=1
+  grep -F "merge poll armed" "$out" >/dev/null || fail "cadence recheck reason did not name the merge wait"
+
+  # Phase C2: immediately after the recheck the throttle holds - not due again.
+  : > "$out"
+  prime_stale_pane "$state" "$capture_file" "$key" merge-wait 'idle at the merge gate, frame B'
+  expect_absorbed_cycle "$state" "$fakebin" "$window" "$capture_file" "$out" \
+    "done-merge-wait recheck throttle" FM_PAUSE_RESURFACE_SECS=30
+
+  # Phase D: fresh status activity changes the wait - the next stale surfaces
+  # once again as a plain stale wake.
+  : > "$out"
+  printf 'done: PR https://github.com/o/r/pull/7 checks green after rebase\n' >> "$state/merge-wait.status"
+  prime_stale_pane "$state" "$capture_file" "$key" merge-wait 'idle at the merge gate, frame C'
+  expect_surfaced_cycle "$state" "$fakebin" "$window" "$capture_file" "$out" \
+    "done-merge-wait fresh activity" "stale: $window"
+  unset FM_FAKE_CREW_STATE
+  pass "a done crew with an armed merge poll surfaces once, absorbs redraw churn, rechecks on the bounded cadence, and re-surfaces on fresh activity"
+}
+
+test_blocked_stop_and_wait_stale_bounded_not_stormed() {
+  local dir state fakebin out capture_file window key
+  dir=$(make_case blocked-wait); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"
+  window="test:fm-blocked-wait"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf 'window=%s\nkind=ship\n' "$window" > "$state/blocked-wait.meta"
+  printf 'blocked: need the SERPAPI credential from the captain\n' > "$state/blocked-wait.status"
+  # No running pipeline, idle pane: the crew stopped by contract and waits.
+  export FM_FAKE_CREW_STATE='state: unknown · source: none · crew stopped by contract, awaiting help'
+
+  # Phase A: the blocked wait's first stale surfaces once.
+  prime_stale_pane "$state" "$capture_file" "$key" blocked-wait 'parked: waiting on the captain, frame A'
+  expect_surfaced_cycle "$state" "$fakebin" "$window" "$capture_file" "$out" \
+    "blocked-wait first sight" "stale: $window"
+  [ -s "$state/.stale-expected-$key" ] || fail "first surface did not record the expected-wait marker"
+
+  # Phase B: redraw churn on the unchanged blocked wait absorbs, never a
+  # per-cycle re-surface.
+  : > "$out"
+  prime_stale_pane "$state" "$capture_file" "$key" blocked-wait 'parked: waiting on the captain, frame B'
+  expect_absorbed_cycle "$state" "$fakebin" "$window" "$capture_file" "$out" "blocked-wait churn"
+  [ "$(cat "$state/.stale-$key" 2>/dev/null || true)" = "$(hash_text 'parked: waiting on the captain, frame B')" ] \
+    || fail "churn absorb did not advance the stale suppressor"
+
+  # Phase C: the bounded recheck fires once past the cadence.
+  : > "$out"
+  sleep 1.1
+  prime_stale_pane "$state" "$capture_file" "$key" blocked-wait 'parked: waiting on the captain, frame B'
+  expect_surfaced_cycle "$state" "$fakebin" "$window" "$capture_file" "$out" \
+    "blocked-wait cadence recheck" "confirm the wait still holds" FM_PAUSE_RESURFACE_SECS=1
+  grep -F "blocked, awaiting help" "$out" >/dev/null || fail "cadence recheck reason did not name the blocked wait"
+
+  # Phase D: a fresh status event (the blocker restated with new detail)
+  # changes the wait - the next stale surfaces once again.
+  : > "$out"
+  printf 'blocked: still waiting - the captain-side credential fix is not in yet\n' >> "$state/blocked-wait.status"
+  prime_stale_pane "$state" "$capture_file" "$key" blocked-wait 'parked: waiting on the captain, frame C'
+  expect_surfaced_cycle "$state" "$fakebin" "$window" "$capture_file" "$out" \
+    "blocked-wait fresh activity" "stale: $window"
+  unset FM_FAKE_CREW_STATE
+  pass "a blocked stop-and-wait crew surfaces once, absorbs redraw churn, rechecks on the bounded cadence, and re-surfaces on fresh activity"
+}
+
 # --- consecutive wedge escalations on the same pane demand deep inspection ----
 # Root cause of the PR #252 incident's ~20 minutes of unnoticed green: each
 # wedge escalation fires, gets classified as "still validating" one poll later
@@ -1212,6 +1371,8 @@ test_nonterminal_stale_pause_transitions_reclassify_unchanged_hash
 test_nonterminal_paused_rechecks_authoritative_state
 test_paused_authoritative_working_preserves_wedge_timer
 test_paused_superseded_by_done_run_step_bounded_not_stormed
+test_done_awaiting_merge_pr_poll_stale_bounded_not_stormed
+test_blocked_stop_and_wait_stale_bounded_not_stormed
 test_nonterminal_stale_repairs_missing_or_corrupt_timer
 test_triage_log_size_cap_accepts_spaced_wc_counts
 test_heartbeat_no_change_absorbed
