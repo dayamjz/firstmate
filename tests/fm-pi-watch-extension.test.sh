@@ -7,6 +7,14 @@ set -u
 
 TMP_ROOT=$(fm_test_tmproot fm-pi-watch-extension)
 EXT="$ROOT/.pi/extensions/fm-primary-pi-watch.ts"
+# The Pi extension and OpenCode plugin spawn their arm children through a
+# login shell (bash -lc), which sources the user's shell profile. A heavy
+# profile can delay child startup past the tight FM_*_ARM_READY_TIMEOUT_MS
+# these tests use, killing a successor before the fake arm script ever runs.
+# Point HOME at an empty fixture so login-shell startup stays fast and
+# deterministic on every machine.
+export HOME="$TMP_ROOT/login-home"
+mkdir -p "$HOME"
 # Node 24 warns when these test-only dynamic imports load tracked ESM plugins
 # from a clean checkout with no tracked .opencode/package.json. The warning is
 # unrelated to plugin output, which the assertions intentionally require empty.

@@ -868,6 +868,26 @@ On entry the launcher drops the prior session's artifacts when the daemon is not
 This never drops a genuinely-pending escalation: the durable record is `state/.wake-queue` plus each crew's `state/<id>.status`, and any still-true condition is re-escalated by the daemon's heartbeat catch-all scan.
 Covered by the unit cases in `tests/fm-afk-launch.test.sh` (clear-on-fresh-entry vs refresh, and the stop ordering asserting the daemon saw `state/.afk` present at SIGTERM).
 
+## Incident (2026-07-26): the bare-composer glyph regex misread box corners under a non-UTF-8 locale
+
+`FM_BACKEND_HERDR_BARE_PROMPT_RE` (the pattern that recognizes an UNBORDERED composer row, e.g. claude's `❯` or codex's `›`) was written as a bracket expression, `^[❯›]`.
+A bracket expression is only character-wise under a UTF-8 locale; under a non-UTF-8 locale (`C`/`POSIX`) grep matches it BYTE-wise, so `[❯›]` becomes a byte class over the six raw bytes of the two glyphs.
+Both glyphs and the box-drawing corners the herdr composer border uses share the same `0xe2` UTF-8 lead byte, so the byte class contains `0xe2` and matches any line starting with it:
+
+```
+$ printf '❯' | xxd   # e2 9d af
+$ printf '›' | xxd   # e2 80 ba
+$ printf '╭' | xxd   # e2 95 ad   (top-left corner, ROW starts with 0xe2)
+$ printf '╰' | xxd   # e2 95 b0   (bottom-left corner, ROW starts with 0xe2)
+```
+
+**Root cause.** With `LC_ALL=C` (or any non-UTF-8 locale a crew or CI runner may carry), a bordered composer's corner rows (`╭…╮`, `╰… Composer ╯`) start with `0xe2` and were misread as a bare (unbordered) composer row, defeating the structural border-vs-bare distinction the classifier depends on.
+
+**Fix (task fm-stale-storm-done-pr, commit 6089465).** The pattern is now an alternation of the two literal multi-byte glyphs, `^(❯|›)`, which matches each glyph's full byte sequence (`e2 9d af` / `e2 80 ba`) rather than any single member byte, so a corner row's `e2 95 …` can never match regardless of the ambient locale.
+The value is synced in [`configuration.md`](configuration.md) and the two in-code comments in `bin/backends/herdr.sh` that quote the pattern were updated to `^(❯|›)`.
+
+**Regression coverage.** `tests/fm-backend-herdr.test.sh`'s structural-classifier cases feed the exact bordered box-corner-plus-`❯` shape through the real `fm_backend_herdr_composer_state` - `test_composer_state_bare_prompt_is_empty` (corner rows are borders, only the `❯` row is the bare composer) and `test_composer_state_bare_prompt_below_stale_bordered_banner_wins` - so the corner-vs-glyph distinction this fix hardens is pinned; the alternation removes the locale dependency those cases would otherwise leave latent.
+
 ## Known gaps and follow-up notes
 
 - **RESOLVED: worktree-discovery isolation guard's symlinked-project-prefix false refusal.** Originally discovered while building the runtime-backend-auto-detection real smoke test (`tests/fm-backend-autodetect-smoke.test.sh`), which needed a scratch project.

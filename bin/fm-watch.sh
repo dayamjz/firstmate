@@ -23,7 +23,12 @@
 #                          re-surface cadence, never as a wedge. Only when neither
 #                          absorb class applies does the log's last line decide:
 #                          terminal (captain-relevant) or non-terminal (no verb),
-#                          both surfaced at once. A provably-working stale past the
+#                          both surfaced at once. An EXPECTED terminal-ish wait -
+#                          done with an armed merge poll, or blocked after the
+#                          stop-and-wait contract - surfaces once per wait, then
+#                          re-surfaces only on the long pause cadence even as the
+#                          idle pane redraws (stale_expected_idle_class below),
+#                          never per poll. A provably-working stale past the
 #                          wedge threshold also surfaces, with an "escalation N"
 #                          count in the reason; at FM_WEDGE_DEMAND_INSPECT_COUNT
 #                          consecutive escalations on the SAME pane, the reason
@@ -332,6 +337,74 @@ handle_paused_stale() {  # <window> <task> <hash>
     wake "$reason"
   fi
   triage_log "absorbed stale (paused, awaiting external, age ${age}s): $win"
+}
+
+# Classify a stale crew whose LAST status line is captain-relevant as an EXPECTED
+# terminal-ish wait, or nothing. Two classes:
+#   done-merge-wait - the crew reported done AND fm-pr-check.sh armed the merge
+#                     poll (the task's .pr-poll sidecar exists): the crew is
+#                     legitimately parked at the merge gate, and the armed check,
+#                     not pane staleness, watches for the merge;
+#   blocked-wait    - the crew's last event is blocked:, its stop-and-wait
+#                     contract: it deliberately stopped and awaits firstmate or
+#                     captain help, so an idle pane is the healthy, expected state.
+# Prints the class token, or nothing when neither applies (the ordinary surface
+# paths stay in charge). A cheap pure read (status line + file presence), safe
+# to evaluate every poll.
+stale_expected_idle_class() {  # <task> <last-status-line>
+  local task=$1 last=$2 verb
+  [ -n "$last" ] || return 0
+  verb=$(status_line_verb "$last")
+  case "$verb" in
+    blocked) printf 'blocked-wait' ;;
+    done)    [ -s "$STATE/$task.pr-poll" ] && printf 'done-merge-wait' ;;
+  esac
+  return 0
+}
+
+# The wait-identity signature for an expected-idle wait: class plus the status
+# file's size:mtime. Stored in .stale-expected-<key> when the wait's first stale
+# surfaces; while it still matches, the SAME wait re-surfacing (an idle-screen
+# redraw churning the pane hash, a repeated poll of an unchanged pane) is
+# absorbed on the bounded cadence below. Any fresh status activity or a class
+# change breaks the match, so the next stale surfaces once again.
+expected_idle_sig() {  # <task> <class>
+  printf '%s@%s' "$2" "$(stat_sig "$STATE/$1.status" 2>/dev/null || true)"
+}
+
+# Absorb a stale pane whose crew reached an EXPECTED terminal-ish wait (see
+# stale_expected_idle_class) that has ALREADY surfaced once, and re-surface it
+# once every PAUSE_RESURFACE_SECS for a recheck so a forgotten wait cannot rot
+# invisibly. The same bounded shape as handle_paused_stale: cheap (never
+# re-reads the crew state), the re-surface age anchored on the pause-analogous
+# STATUS-FILE mtime so a churny idle pane cannot reset the cadence, and a
+# .stale-expected-resurfaced-<key> throttle marker so a due re-surface fires
+# once per window rather than every poll. Advances the stale suppressor to
+# <hash> so redraw churn stops re-triggering first-sight classification - the
+# 2026-07-25/26 per-poll stale storms on a done crew idle at an armed merge
+# poll and a blocked crew parked on a captain-side fix.
+handle_expected_idle_stale() {  # <window> <task> <hash> <class>
+  local win=$1 task=$2 h=$3 class=$4 key statusf mtime age rf rf_age what reason
+  key=$(printf '%s' "$win" | tr ':/.' '___')
+  printf '%s' "$h" > "$STATE/.stale-$key"
+  rm -f "$STATE/.stale-since-$key" "$STATE/.wedge-escalations-$key"
+  statusf="$STATE/$task.status"
+  mtime=$(stat_mtime "$statusf")
+  case "$mtime" in ''|*[!0-9]*) mtime=$(date +%s) ;; esac
+  age=$(( $(date +%s) - mtime ))
+  rf="$STATE/.stale-expected-resurfaced-$key"
+  rf_age=$(age_of "$rf")   # 999999 when no prior re-surface
+  if [ "$age" -ge "$PAUSE_RESURFACE_SECS" ] && [ "$rf_age" -ge "$PAUSE_RESURFACE_SECS" ]; then
+    case "$class" in
+      done-merge-wait) what="done, merge poll armed - awaiting merge authority" ;;
+      *)               what="blocked, awaiting help" ;;
+    esac
+    reason="stale: $win ($what, idle ${age}s - expected wait, rechecked on a long cadence not a wedge; confirm the wait still holds)"
+    fm_wake_append stale "$win" "$reason" || exit 1
+    date +%s > "$rf"
+    wake "$reason"
+  fi
+  triage_log "absorbed stale ($class, expected idle, age ${age}s): $win"
 }
 
 clear_pause_state() {  # <window>
@@ -895,16 +968,33 @@ EOF
           # line. On a NEW hash, give an active run/busy pane (the same
           # authoritative source fm-crew-state.sh itself already prioritizes
           # over the log) a chance to override before trusting the log.
+          # An EXPECTED terminal-ish wait (done with an armed merge poll, or a
+          # blocked crew that stopped by contract) is keyed by wait identity,
+          # not pane hash: the hash-scoped .stale-* suppressor alone cannot
+          # bound it, because an idle screen redraw (or a steer's reply) churns
+          # the hash and every new hash looks like a fresh first sight - the
+          # 2026-07-25/26 per-poll stale storms. The wait surfaces ONCE (the
+          # .stale-expected-<key> marker records the wait signature), then the
+          # same unchanged wait is absorbed on the bounded pause cadence; any
+          # fresh status activity or class change breaks the signature and the
+          # next stale surfaces once again.
+          eclass=$(stale_expected_idle_class "$task" "$(last_status_line "$STATE/$task.status")")
+          esig=""
+          [ -n "$eclass" ] && esig=$(expected_idle_sig "$task" "$eclass")
+          eif="$STATE/.stale-expected-$key"
           if [ "$(cat "$sf" 2>/dev/null || true)" != "$h" ]; then
-            if crew_is_provably_working "$(window_to_task "$w" "$STATE")"; then
+            if crew_is_provably_working "$task"; then
               printf '%s' "$h" > "$sf"
               date +%s > "$ssf"
               triage_log "absorbed stale (provably working, overriding a stale captain-relevant status): $w"
+            elif [ -n "$eclass" ] && [ "$(cat "$eif" 2>/dev/null || true)" = "$esig" ]; then
+              handle_expected_idle_stale "$w" "$task" "$h" "$eclass"
             else
               fm_wake_append stale "$w" "stale: $w" || exit 1
               printf '%s' "$h" > "$sf"
               rm -f "$ssf"
-              mark_surfaced "$STATE/$(window_to_task "$w" "$STATE").status"
+              [ -n "$eclass" ] && printf '%s' "$esig" > "$eif"
+              mark_surfaced "$STATE/$task.status"
               wake "stale: $w"
             fi
           elif [ -e "$ssf" ]; then
@@ -913,6 +1003,10 @@ EOF
             # without re-reading the crew state every poll, and without
             # letting the still-captain-relevant log line re-surface it.
             wedge_timer_check "$w" "$ssf" "stale (overridden terminal status)" "$ewf"
+          elif [ -n "$eclass" ] && [ "$(cat "$eif" 2>/dev/null || true)" = "$esig" ]; then
+            # Unchanged hash, already-surfaced expected wait: keep the bounded
+            # re-surface cadence live so a forgotten wait cannot rot invisibly.
+            handle_expected_idle_stale "$w" "$task" "$h" "$eclass"
           fi
           # else: already surfaced as genuinely terminal on a prior poll of
           # this same hash - nothing left to do (matches the original,

@@ -81,16 +81,22 @@ fm_afk_launch_lock_acquire() {
   mkdir -p "$FM_AFK_LAUNCH_STATE" || return 1
   for i in $(seq 1 200); do
     if mkdir "$FM_AFK_LAUNCH_LOCK" 2>/dev/null; then
+      # Claim ownership the instant the dir exists, before the pid write, so a
+      # signal-driven release landing in the mkdir->pid window still cleans up.
+      FM_AFK_LAUNCH_LOCK_MINE=1
       if ! printf '%s' "$$" > "$FM_AFK_LAUNCH_LOCK/pid"; then
         rm -rf "$FM_AFK_LAUNCH_LOCK"
+        FM_AFK_LAUNCH_LOCK_MINE=
         return 1
       fi
       identity=$(fm_pid_identity "$$" 2>/dev/null) || {
         rm -rf "$FM_AFK_LAUNCH_LOCK"
+        FM_AFK_LAUNCH_LOCK_MINE=
         return 1
       }
       if [ -z "$identity" ] || ! printf '%s' "$identity" > "$FM_AFK_LAUNCH_LOCK/pid-identity"; then
         rm -rf "$FM_AFK_LAUNCH_LOCK"
+        FM_AFK_LAUNCH_LOCK_MINE=
         return 1
       fi
       return 0
@@ -118,8 +124,12 @@ fm_afk_launch_lock_acquire() {
 fm_afk_launch_lock_release() {
   local pid
   pid=$(cat "$FM_AFK_LAUNCH_LOCK/pid" 2>/dev/null || true)
-  [ "$pid" = "$$" ] || return 0
-  rm -rf "$FM_AFK_LAUNCH_LOCK"
+  # Our lock either carries our pid, or was created by us but interrupted before
+  # the pid write (mkdir->pid window); both cases are ours to remove.
+  if [ "$pid" = "$$" ] || { [ -z "$pid" ] && [ "${FM_AFK_LAUNCH_LOCK_MINE:-}" = 1 ]; }; then
+    rm -rf "$FM_AFK_LAUNCH_LOCK"
+    FM_AFK_LAUNCH_LOCK_MINE=
+  fi
 }
 
 fm_afk_launch_usage() {
@@ -603,10 +613,12 @@ fm_afk_launch_stop() {
 
 fm_afk_launch_main() {
   local result
-  fm_afk_launch_lock_acquire || return 1
+  # Arm cleanup before acquiring so a signal landing during or right after
+  # acquisition still releases the lock instead of leaking the dir.
   trap fm_afk_launch_lock_release EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
+  fm_afk_launch_lock_acquire || return 1
   case "${1:-start}" in
     start) fm_afk_launch_start ;;
     start-native) fm_afk_launch_start_native ;;
