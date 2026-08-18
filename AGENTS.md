@@ -452,6 +452,7 @@ These skills are not captain-invocable; load them only at their precise triggers
 - `diagnostic-reasoning` - load before scoping a reported bug and before acting on a diagnostic report.
 - `harness-adapters` - load before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter.
 - `firstmate-orca` - load before switching to Orca, spawning or supervising Orca-backed work, smoke-testing Orca backend behavior, debugging Orca task state, or reconciling Orca-backed task metadata.
+- `google-dev-style` - load when the captain invokes /google-dev-style or asks for Google developer documentation style output; applies that style to all subsequent captain-facing output in the session.
 - `project-management` - load before adding, creating, removing, or initializing a project.
 - `stuck-crewmate-recovery` - load when the session-start digest reports an ordinary direct report's endpoint dead or its metadata has no window, or after a stale wake, looping pane, repeated confusion, an answered-by-brief question, an unresponsive crewmate, or a failed steer.
 - `secondmate-provisioning` - load before creating, seeding, validating, launching, handing backlog to, recovering, pushing inherited local material into, or retiring a secondmate home, and before editing `data/secondmates.md`.
