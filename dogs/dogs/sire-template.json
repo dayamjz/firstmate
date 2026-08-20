@@ -1,0 +1,25 @@
+{
+  "name": "SIRE_NAME",
+  "embark_profile_name": "",
+  "embark_url": "",
+  "breed": "Pomeranian (100%)",
+  "sex": "male",
+  "captured": "",
+  "predicted_adult_weight_lbs": null,
+  "_instructions": "Copy this file to <name>.json and fill in each locus with the sire's two alleles from his Embark (or other) coat color DNA report. Allele spellings: E locus: Em/Eg/E/e; K: KB/ky; A: ay/aw/at/a; B: B/b; D: D/d; Cocoa: N/co; SaddleTan: N/I; S: S/sp; M: M/m (use M for any merle allele incl. cryptic); H: H/h. Delete this key when done.",
+  "coat_color_loci": {
+    "E": ["E", "e"],
+    "K": ["ky", "ky"],
+    "A": ["ay", "ay"],
+    "B": ["B", "B"],
+    "D": ["D", "D"],
+    "Cocoa": ["N", "N"],
+    "SaddleTan": ["N", "N"],
+    "S": ["S", "S"],
+    "M": ["m", "m"],
+    "H": ["h", "h"]
+  },
+  "intensity": "",
+  "other_traits": {},
+  "embark_reported": {}
+}

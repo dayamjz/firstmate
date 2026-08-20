@@ -1,0 +1,43 @@
+{
+  "name": "Lola",
+  "embark_profile_name": "Ray",
+  "embark_url": "https://my.embarkvet.com/dog/ray289",
+  "breed": "Pomeranian (100%)",
+  "sex": "female",
+  "captured": "2026-08-20",
+  "predicted_adult_weight_lbs": 5,
+  "coat_color_loci": {
+    "E": ["E", "e"],
+    "K": ["KB", "ky"],
+    "A": ["ay", "at"],
+    "B": ["B", "b"],
+    "D": ["d", "d"],
+    "Cocoa": ["N", "N"],
+    "SaddleTan": ["N", "I"],
+    "S": ["S", "sp"],
+    "M": ["m", "m"],
+    "H": ["h", "h"]
+  },
+  "intensity": "Intermediate Red Pigmentation",
+  "other_traits": {
+    "Furnishings (RSPO2)": "II (likely unfurnished)",
+    "Coat Length (FGF5)": "LhLh (likely long coat)",
+    "Shedding (MC5R)": "CC (likely heavy/seasonal shedding)",
+    "Coat Texture (KRT71)": "CC (likely straight coat)"
+  },
+  "embark_reported": {
+    "E": "No dark mask or grizzle (Ee)",
+    "K": "More likely to have a mostly solid black or brown coat (KBky)",
+    "Intensity": "No impact on coat pattern (Intermediate Red Pigmentation)",
+    "A": "Not expressed (ayat)",
+    "D": "Dark areas of hair and skin are lightened (dd)",
+    "Cocoa": "No co alleles, not expressed (NN)",
+    "B": "Black or gray hair and skin (Bb)",
+    "SaddleTan": "Not expressed (NI)",
+    "S": "Likely solid colored, but may have small amounts of white (Ssp)",
+    "M": "No merle alleles (mm)",
+    "R": "Likely no impact on coat pattern (rr)",
+    "H": "No harlequin alleles (hh)",
+    "Panda": "Not expected to display Panda pattern (NN)"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "name": "Rexy",
+  "embark_profile_name": "Rexy",
+  "embark_url": "https://my.embarkvet.com/dog/rexy10",
+  "breed": "Pomeranian (100%)",
+  "sex": "female",
+  "captured": "2026-08-20",
+  "predicted_adult_weight_lbs": 8,
+  "coat_color_loci": {
+    "E": ["E", "e"],
+    "K": ["ky", "ky"],
+    "A": ["ay", "at"],
+    "B": ["B", "B"],
+    "D": ["D", "d"],
+    "Cocoa": ["N", "N"],
+    "SaddleTan": ["N", "I"],
+    "S": ["S", "sp"],
+    "M": ["M", "m"],
+    "H": ["h", "h"]
+  },
+  "intensity": "Dilute Red Pigmentation",
+  "other_traits": {
+    "Furnishings (RSPO2)": "II (likely unfurnished)",
+    "Coat Length (FGF5)": "LhLh (likely long coat)",
+    "Shedding (MC5R)": "CT (likely heavy/seasonal shedding)",
+    "Coat Texture (KRT71)": "CC (likely straight coat)"
+  },
+  "embark_reported": {
+    "E": "No dark mask or grizzle (Ee)",
+    "K": "More likely to have a patterned haircoat (kyky)",
+    "Intensity": "Any light hair likely white or cream (Dilute Red Pigmentation)",
+    "A": "Fawn Sable coat color pattern (ayat)",
+    "D": "Dark areas of hair and skin are not lightened (Dd)",
+    "Cocoa": "No co alleles, not expressed (NN)",
+    "B": "Black or gray hair and skin (BB)",
+    "SaddleTan": "Not expressed (NI)",
+    "S": "Likely solid colored, but may have small amounts of white (Ssp)",
+    "M": "One merle allele; may express merle (M*m)",
+    "R": "Likely no impact on coat pattern (rr)",
+    "H": "No harlequin alleles (hh)"
+  }
+}

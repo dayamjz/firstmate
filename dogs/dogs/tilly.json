@@ -1,0 +1,43 @@
+{
+  "name": "Tilly",
+  "embark_profile_name": "Tilly",
+  "embark_url": "https://my.embarkvet.com/dog/tilly2248",
+  "breed": "Pomeranian (100%)",
+  "sex": "female",
+  "captured": "2026-08-20",
+  "predicted_adult_weight_lbs": 8,
+  "coat_color_loci": {
+    "E": ["E", "E"],
+    "K": ["ky", "ky"],
+    "A": ["at", "a"],
+    "B": ["B", "b"],
+    "D": ["d", "d"],
+    "Cocoa": ["N", "N"],
+    "SaddleTan": ["N", "I"],
+    "S": ["S", "sp"],
+    "M": ["M", "m"],
+    "H": ["h", "h"]
+  },
+  "intensity": "Intermediate Red Pigmentation",
+  "other_traits": {
+    "Furnishings (RSPO2)": "II (likely unfurnished)",
+    "Coat Length (FGF5)": "LhLh (likely long coat)",
+    "Shedding (MC5R)": "CC (likely heavy/seasonal shedding)",
+    "Coat Texture (KRT71)": "CC (likely straight coat)"
+  },
+  "embark_reported": {
+    "E": "No dark mask or grizzle (EE)",
+    "K": "More likely to have a patterned haircoat (kyky)",
+    "Intensity": "Any light hair likely yellow or tan (Intermediate Red Pigmentation)",
+    "A": "Black/Brown and tan coat color pattern (ata)",
+    "D": "Dark areas of hair and skin are lightened (dd)",
+    "Cocoa": "No co alleles, not expressed (NN)",
+    "B": "Black or gray hair and skin (Bb)",
+    "SaddleTan": "Likely saddle tan patterned (NI)",
+    "S": "Likely solid colored, but may have small amounts of white (Ssp)",
+    "M": "One merle allele; may express merle (M*m)",
+    "R": "Likely no impact on coat pattern (rr)",
+    "H": "No harlequin alleles (hh)",
+    "Panda": "Not expected to display Panda pattern (NN)"
+  }
+}
